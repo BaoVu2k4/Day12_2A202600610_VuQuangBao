@@ -1,5 +1,5 @@
 """
-Production AI Agent — Kết hợp tất cả Day 12 concepts
+Production AI Agent — NGAY09 Legal Multi-Agent System + Day 12 middleware
 
 Checklist:
   ✅ Config từ environment (12-factor)
@@ -13,14 +13,19 @@ Checklist:
   ✅ Security headers
   ✅ CORS
   ✅ Error handling
+  ✅ NGAY09 multi-agent integration (registry + law/tax/compliance)
 """
+import asyncio
 import os
+import sys
 import time
 import signal
 import logging
 import json
+import socket
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,9 +36,6 @@ from app.config import settings
 from app.auth import verify_api_key
 from app.rate_limiter import check_rate_limit
 from app.cost_guard import check_and_record_cost, get_daily_cost
-
-# Mock LLM (thay bằng OpenAI/Anthropic khi có API key)
-from utils.mock_llm import ask as llm_ask
 
 # ─────────────────────────────────────────────────────────
 # Logging — JSON structured
@@ -48,6 +50,113 @@ START_TIME = time.time()
 _is_ready = False
 _request_count = 0
 _error_count = 0
+_subprocesses: list = []
+
+# ─────────────────────────────────────────────────────────
+# LLM backend — real NGAY09 agents OR mock fallback
+# ─────────────────────────────────────────────────────────
+_use_real_agents = bool(os.getenv("OPENROUTER_API_KEY"))
+
+if not _use_real_agents:
+    from utils.mock_llm import ask as _mock_ask
+    logger.warning(json.dumps({"event": "config", "llm": "mock", "reason": "OPENROUTER_API_KEY not set"}))
+
+
+# ─────────────────────────────────────────────────────────
+# Sub-agent management
+# ─────────────────────────────────────────────────────────
+async def _port_open(port: int, timeout: float = 30.0) -> bool:
+    """Return True when 127.0.0.1:port accepts TCP connections."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except OSError:
+            await asyncio.sleep(0.5)
+    return False
+
+
+async def _start_subagents() -> None:
+    """Launch registry + law/tax/compliance agents as background subprocesses."""
+    global _subprocesses
+    python = sys.executable
+    env = {**os.environ, "PYTHONPATH": str(os.getcwd())}
+
+    # (module_name, port)
+    agents = [
+        ("registry", 10000),
+        ("law_agent", 10101),
+        ("tax_agent", 10102),
+        ("compliance_agent", 10103),
+    ]
+    for module, port in agents:
+        proc = await asyncio.create_subprocess_exec(
+            python, "-m", module,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        _subprocesses.append(proc)
+        logger.info(json.dumps({"event": "agent_started", "module": module, "pid": proc.pid, "port": port}))
+
+    # Wait for registry to be reachable before marking app as ready
+    if await _port_open(10000, timeout=30):
+        logger.info(json.dumps({"event": "registry_ready"}))
+    else:
+        logger.warning(json.dumps({"event": "registry_timeout", "msg": "registry did not start in 30s"}))
+
+
+def _stop_subagents() -> None:
+    """Send SIGTERM to all sub-agent processes."""
+    for proc in _subprocesses:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    logger.info(json.dumps({"event": "agents_stopped", "count": len(_subprocesses)}))
+
+
+# ─────────────────────────────────────────────────────────
+# Real-agent call via LangGraph
+# ─────────────────────────────────────────────────────────
+async def _call_real_agents(question: str) -> tuple[str, int, int]:
+    """Invoke NGAY09 customer_agent graph and return (answer, in_tokens, out_tokens)."""
+    from customer_agent.graph import build_graph
+    from langchain_core.messages import HumanMessage, AIMessage
+
+    trace_id = str(uuid4())
+    context_id = str(uuid4())
+
+    graph = build_graph(trace_id=trace_id, context_id=context_id, depth=0)
+    result = await graph.ainvoke(
+        {"messages": [HumanMessage(content=question)]},
+        config={"configurable": {"thread_id": context_id}},
+    )
+
+    answer = ""
+    in_tokens = 0
+    out_tokens = 0
+
+    for msg in reversed(result.get("messages", [])):
+        if isinstance(msg, AIMessage) and msg.content:
+            answer = str(msg.content)
+            usage = getattr(msg, "usage_metadata", None) or {}
+            in_tokens = usage.get("input_tokens", 0)
+            out_tokens = usage.get("output_tokens", 0)
+            break
+
+    if not answer:
+        answer = "I was unable to process your legal question at this time."
+
+    # Fall back to length-based estimates when usage_metadata is absent
+    if not in_tokens:
+        in_tokens = len(question.split()) * 2
+    if not out_tokens:
+        out_tokens = len(answer.split()) * 2
+
+    return answer, in_tokens, out_tokens
+
 
 # ─────────────────────────────────────────────────────────
 # Lifespan
@@ -60,15 +169,23 @@ async def lifespan(app: FastAPI):
         "app": settings.app_name,
         "version": settings.app_version,
         "environment": settings.environment,
+        "llm_backend": "ngay09_multiagent" if _use_real_agents else "mock",
     }))
-    time.sleep(0.1)  # simulate init
+
+    if _use_real_agents:
+        await _start_subagents()
+        await asyncio.sleep(3)  # let agents finish registering with each other
+
     _is_ready = True
     logger.info(json.dumps({"event": "ready"}))
 
     yield
 
     _is_ready = False
+    if _use_real_agents:
+        _stop_subagents()
     logger.info(json.dumps({"event": "shutdown"}))
+
 
 # ─────────────────────────────────────────────────────────
 # App
@@ -88,6 +205,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
 
+
 @app.middleware("http")
 async def request_middleware(request: Request, call_next):
     global _request_count, _error_count
@@ -95,7 +213,6 @@ async def request_middleware(request: Request, call_next):
     _request_count += 1
     try:
         response: Response = await call_next(request)
-        # Security headers
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         if "server" in response.headers:
@@ -109,16 +226,18 @@ async def request_middleware(request: Request, call_next):
             "ms": duration,
         }))
         return response
-    except Exception as e:
+    except Exception:
         _error_count += 1
         raise
+
 
 # ─────────────────────────────────────────────────────────
 # Models
 # ─────────────────────────────────────────────────────────
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000,
-                          description="Your question for the agent")
+                          description="Your question for the legal agent")
+
 
 class AskResponse(BaseModel):
     question: str
@@ -126,20 +245,22 @@ class AskResponse(BaseModel):
     model: str
     timestamp: str
 
+
 # ─────────────────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────────────────
-
 @app.get("/", tags=["Info"])
 def root():
     return {
         "app": settings.app_name,
         "version": settings.app_version,
         "environment": settings.environment,
+        "llm_backend": "ngay09_multiagent" if _use_real_agents else "mock",
         "endpoints": {
             "ask": "POST /ask (requires X-API-Key)",
             "health": "GET /health",
             "ready": "GET /ready",
+            "metrics": "GET /metrics (requires X-API-Key)",
         },
     }
 
@@ -151,32 +272,38 @@ async def ask_agent(
     _key: str = Depends(verify_api_key),
 ):
     """
-    Send a question to the AI agent.
+    Send a legal question to the AI agent system.
 
     **Authentication:** Include header `X-API-Key: <your-key>`
     """
-    # Rate limit per API key
-    check_rate_limit(_key[:8])  # use first 8 chars as key bucket
+    check_rate_limit(_key[:8])
 
-    # Budget check
+    # Pre-call budget check with estimated input tokens
     input_tokens = len(body.question.split()) * 2
     check_and_record_cost(input_tokens, 0)
 
     logger.info(json.dumps({
         "event": "agent_call",
         "q_len": len(body.question),
+        "backend": "ngay09" if _use_real_agents else "mock",
         "client": str(request.client.host) if request.client else "unknown",
     }))
 
-    answer = llm_ask(body.question)
-
-    output_tokens = len(answer.split()) * 2
-    check_and_record_cost(0, output_tokens)
+    if _use_real_agents:
+        answer, in_tok, out_tok = await _call_real_agents(body.question)
+        # Record actual output token cost (input was already recorded above)
+        check_and_record_cost(0, out_tok)
+        model_name = os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4-5")
+    else:
+        answer = _mock_ask(body.question)
+        output_tokens = len(answer.split()) * 2
+        check_and_record_cost(0, output_tokens)
+        model_name = "mock-llm"
 
     return AskResponse(
         question=body.question,
         answer=answer,
-        model=settings.llm_model,
+        model=model_name,
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -184,15 +311,15 @@ async def ask_agent(
 @app.get("/health", tags=["Operations"])
 def health():
     """Liveness probe. Platform restarts container if this fails."""
-    status = "ok"
-    checks = {"llm": "mock" if not settings.openai_api_key else "openai"}
+    backend = "ngay09_multiagent" if _use_real_agents else "mock"
     return {
-        "status": status,
+        "status": "ok",
         "version": settings.app_version,
         "environment": settings.environment,
         "uptime_seconds": round(time.time() - START_TIME, 1),
         "total_requests": _request_count,
-        "checks": checks,
+        "llm_backend": backend,
+        "agents_running": len(_subprocesses),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -216,6 +343,7 @@ def metrics(_key: str = Depends(verify_api_key)):
         "daily_cost_usd": round(daily_cost, 4),
         "daily_budget_usd": settings.daily_budget_usd,
         "budget_used_pct": round(daily_cost / settings.daily_budget_usd * 100, 1),
+        "llm_backend": "ngay09_multiagent" if _use_real_agents else "mock",
     }
 
 
@@ -225,12 +353,12 @@ def metrics(_key: str = Depends(verify_api_key)):
 def _handle_signal(signum, _frame):
     logger.info(json.dumps({"event": "signal", "signum": signum}))
 
+
 signal.signal(signal.SIGTERM, _handle_signal)
 
 
 if __name__ == "__main__":
     logger.info(f"Starting {settings.app_name} on {settings.host}:{settings.port}")
-    logger.info(f"API Key: {settings.agent_api_key[:4]}****")
     uvicorn.run(
         "app.main:app",
         host=settings.host,
