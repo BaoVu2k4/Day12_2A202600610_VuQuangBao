@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Legal Multi-Agent — Day 12</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3350;
+      --accent: #4f6ef7;
+      --accent-dim: #2a3a8a;
+      --text: #e2e8f0;
+      --text-muted: #8892a4;
+      --user-bubble: #1e3a5f;
+      --agent-bubble: #1e2d1e;
+      --error: #c0392b;
+      --warning: #e67e22;
+      --success: #27ae60;
+      --gold: #f39c12;
+    }
+
+    html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); }
+
+    /* ── Layout ── */
+    .app { display: flex; flex-direction: column; height: 100vh; max-width: 900px; margin: 0 auto; }
+
+    /* ── Header ── */
+    header {
+      padding: 14px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 14px;
+      flex-shrink: 0;
+    }
+    .logo {
+      width: 36px; height: 36px; border-radius: 8px;
+      background: var(--accent); display: flex; align-items: center; justify-content: center;
+      font-size: 18px; flex-shrink: 0;
+    }
+    .header-info { flex: 1; }
+    .header-info h1 { font-size: 16px; font-weight: 600; }
+    .header-info p  { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--success); flex-shrink: 0;
+      box-shadow: 0 0 6px var(--success);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* ── API Key bar ── */
+    .key-bar {
+      padding: 10px 20px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      display: flex; gap: 8px; align-items: center;
+      flex-shrink: 0;
+    }
+    .key-bar label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+    .key-bar input {
+      flex: 1; padding: 6px 10px; border-radius: 6px;
+      background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); font-size: 13px; font-family: monospace;
+      outline: none;
+    }
+    .key-bar input:focus { border-color: var(--accent); }
+    .tag {
+      padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;
+      background: var(--accent-dim); color: var(--accent); white-space: nowrap;
+    }
+
+    /* ── Messages ── */
+    .messages {
+      flex: 1; overflow-y: auto; padding: 20px;
+      display: flex; flex-direction: column; gap: 16px;
+      scroll-behavior: smooth;
+    }
+    .messages::-webkit-scrollbar { width: 6px; }
+    .messages::-webkit-scrollbar-track { background: transparent; }
+    .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Message bubbles ── */
+    .msg { display: flex; gap: 10px; align-items: flex-start; }
+    .msg.user { flex-direction: row-reverse; }
+
+    .avatar {
+      width: 32px; height: 32px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px; flex-shrink: 0;
+    }
+    .msg.user .avatar  { background: var(--accent); }
+    .msg.agent .avatar { background: #2d5016; }
+
+    .bubble {
+      max-width: 75%; padding: 12px 16px; border-radius: 14px;
+      font-size: 14px; line-height: 1.6;
+    }
+    .msg.user  .bubble { background: var(--user-bubble);  border-bottom-right-radius: 4px; }
+    .msg.agent .bubble { background: var(--agent-bubble); border-bottom-left-radius: 4px; }
+
+    .bubble .meta {
+      font-size: 11px; color: var(--text-muted); margin-top: 8px;
+      display: flex; gap: 10px; align-items: center;
+    }
+    .model-tag {
+      padding: 2px 6px; border-radius: 3px;
+      background: rgba(79,110,247,.15); color: var(--accent);
+      font-size: 10px; font-weight: 600;
+    }
+
+    /* ── Welcome card ── */
+    .welcome {
+      margin: auto;
+      text-align: center; padding: 40px 20px;
+    }
+    .welcome .icon { font-size: 48px; margin-bottom: 16px; }
+    .welcome h2 { font-size: 20px; margin-bottom: 8px; }
+    .welcome p { color: var(--text-muted); font-size: 14px; line-height: 1.6; max-width: 400px; }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 20px; }
+    .chip {
+      padding: 8px 14px; border-radius: 20px; font-size: 13px;
+      background: var(--surface2); border: 1px solid var(--border);
+      cursor: pointer; transition: border-color .2s, background .2s;
+    }
+    .chip:hover { border-color: var(--accent); background: var(--accent-dim); }
+
+    /* ── Typing indicator ── */
+    .typing .bubble {
+      display: flex; gap: 5px; align-items: center; padding: 14px 18px;
+    }
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--text-muted); animation: bounce 1.2s infinite;
+    }
+    .dot:nth-child(2) { animation-delay: .2s; }
+    .dot:nth-child(3) { animation-delay: .4s; }
+    @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
+
+    /* ── Error bubble ── */
+    .error-bubble {
+      padding: 10px 14px; border-radius: 10px;
+      background: rgba(192,57,43,.15); border: 1px solid rgba(192,57,43,.3);
+      color: #e57373; font-size: 13px;
+    }
+
+    /* ── Input area ── */
+    .input-area {
+      padding: 16px 20px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .input-row { display: flex; gap: 10px; align-items: flex-end; }
+    textarea {
+      flex: 1; padding: 12px 14px; border-radius: 10px;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); font-size: 14px; font-family: inherit;
+      resize: none; outline: none; min-height: 48px; max-height: 160px;
+      transition: border-color .2s;
+      line-height: 1.5;
+    }
+    textarea:focus { border-color: var(--accent); }
+    textarea::placeholder { color: var(--text-muted); }
+
+    button#send {
+      width: 48px; height: 48px; border-radius: 10px; border: none;
+      background: var(--accent); color: #fff; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; flex-shrink: 0; transition: background .2s, transform .1s;
+    }
+    button#send:hover:not(:disabled) { background: #3d5ce0; }
+    button#send:active:not(:disabled) { transform: scale(.95); }
+    button#send:disabled { background: var(--border); cursor: not-allowed; }
+
+    .hint { font-size: 11px; color: var(--text-muted); margin-top: 8px; text-align: center; }
+
+    /* ── Stats bar ── */
+    .stats {
+      display: flex; gap: 16px; padding: 8px 20px;
+      background: var(--surface2); border-top: 1px solid var(--border);
+      flex-shrink: 0; font-size: 11px; color: var(--text-muted);
+    }
+    .stat span { color: var(--text); font-weight: 600; }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .bubble { max-width: 90%; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">⚖️</div>
+    <div class="header-info">
+      <h1>Legal Multi-Agent System</h1>
+      <p>NGAY09 · Day 12 · Vũ Quang Bảo — 2A202600610</p>
+    </div>
+    <div class="status-dot" id="statusDot" title="Online"></div>
+  </header>
+
+  <!-- API Key bar -->
+  <div class="key-bar">
+    <label>X-API-Key</label>
+    <input type="password" id="apiKey" placeholder="nhập API key..." value="day12-secret-bao-2026" />
+    <div class="tag" id="keyTag">production</div>
+  </div>
+
+  <!-- Messages -->
+  <div class="messages" id="messages">
+    <div class="welcome" id="welcome">
+      <div class="icon">⚖️</div>
+      <h2>Legal Multi-Agent Assistant</h2>
+      <p>Hỏi bất kỳ câu hỏi pháp lý nào. Hệ thống sẽ điều phối <strong>5 agents</strong> (Customer → Law → Tax + Compliance) để trả lời.</p>
+      <div class="chips">
+        <div class="chip" onclick="useChip(this)">SEC disclosure requirements for IPO?</div>
+        <div class="chip" onclick="useChip(this)">Tax implications of corporate restructuring?</div>
+        <div class="chip" onclick="useChip(this)">AML compliance obligations for fintech?</div>
+        <div class="chip" onclick="useChip(this)">SOX requirements for public companies?</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats bar -->
+  <div class="stats">
+    <div>Requests: <span id="statReq">0</span></div>
+    <div>Model: <span id="statModel">—</span></div>
+    <div>Last: <span id="statTime">—</span></div>
+    <div>URL: <span>exemplary-mercy-production-080d.up.railway.app</span></div>
+  </div>
+
+  <!-- Input -->
+  <div class="input-area">
+    <div class="input-row">
+      <textarea id="input" rows="1" placeholder="Nhập câu hỏi pháp lý... (Enter để gửi, Shift+Enter xuống dòng)"></textarea>
+      <button id="send" onclick="sendMsg()" title="Gửi">➤</button>
+    </div>
+    <p class="hint">Hệ thống multi-agent có thể mất 10–30s · Rate limit: 10 req/min</p>
+  </div>
+
+</div>
+
+<script>
+  const BASE = 'https://exemplary-mercy-production-080d.up.railway.app';
+  let reqCount = 0;
+  let isLoading = false;
+
+  // Auto-resize textarea
+  const textarea = document.getElementById('input');
+  textarea.addEventListener('input', () => {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 160) + 'px';
+  });
+  textarea.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+  });
+
+  function useChip(el) {
+    textarea.value = el.textContent;
+    textarea.dispatchEvent(new Event('input'));
+    textarea.focus();
+    document.getElementById('welcome').style.display = 'none';
+  }
+
+  function scrollBottom() {
+    const m = document.getElementById('messages');
+    m.scrollTop = m.scrollHeight;
+  }
+
+  function appendMsg(role, content, meta = null) {
+    document.getElementById('welcome').style.display = 'none';
+    const msgs = document.getElementById('messages');
+
+    const div = document.createElement('div');
+    div.className = `msg ${role}`;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = role === 'user' ? '🧑' : '🤖';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.innerHTML = formatText(content);
+
+    if (meta) {
+      const m = document.createElement('div');
+      m.className = 'meta';
+      m.innerHTML = `<span class="model-tag">${meta.model}</span><span>${meta.ts}</span>`;
+      bubble.appendChild(m);
+    }
+
+    div.appendChild(avatar);
+    div.appendChild(bubble);
+    msgs.appendChild(div);
+    scrollBottom();
+    return div;
+  }
+
+  function appendError(msg) {
+    const msgs = document.getElementById('messages');
+    const div = document.createElement('div');
+    div.className = 'msg agent';
+    div.innerHTML = `<div class="avatar">⚠️</div><div class="error-bubble">${msg}</div>`;
+    msgs.appendChild(div);
+    scrollBottom();
+  }
+
+  function appendTyping() {
+    const msgs = document.getElementById('messages');
+    const div = document.createElement('div');
+    div.className = 'msg agent typing';
+    div.id = 'typing';
+    div.innerHTML = `<div class="avatar">🤖</div><div class="bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;
+    msgs.appendChild(div);
+    scrollBottom();
+    return div;
+  }
+
+  function formatText(text) {
+    return text
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')
+      .replace(/`(.*?)`/g,'<code style="background:rgba(255,255,255,.1);padding:1px 4px;border-radius:3px;font-size:13px">$1</code>')
+      .replace(/\n/g,'<br>');
+  }
+
+  async function sendMsg() {
+    if (isLoading) return;
+    const key = document.getElementById('apiKey').value.trim();
+    const question = textarea.value.trim();
+
+    if (!key) { appendError('Nhập API key trước.'); return; }
+    if (!question) return;
+
+    isLoading = true;
+    document.getElementById('send').disabled = true;
+    textarea.value = '';
+    textarea.style.height = 'auto';
+
+    appendMsg('user', question);
+    const typing = appendTyping();
+
+    try {
+      const t0 = Date.now();
+      const res = await fetch(`${BASE}/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
+        body: JSON.stringify({ question }),
+      });
+
+      typing.remove();
+
+      if (res.status === 401) { appendError('❌ Sai API key — kiểm tra lại X-API-Key.'); return; }
+      if (res.status === 429) { appendError('⏱️ Rate limit: quá 10 req/min. Thử lại sau 1 phút.'); return; }
+      if (res.status === 402) { appendError('💰 Đã hết budget ngày ($10). Thử lại ngày mai.'); return; }
+      if (!res.ok) { appendError(`Lỗi ${res.status} từ server.`); return; }
+
+      const data = await res.json();
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      reqCount++;
+
+      appendMsg('agent', data.answer, {
+        model: data.model,
+        ts: `${elapsed}s · ${new Date(data.timestamp).toLocaleTimeString('vi-VN')}`,
+      });
+
+      document.getElementById('statReq').textContent = reqCount;
+      document.getElementById('statModel').textContent = data.model;
+      document.getElementById('statTime').textContent = elapsed + 's';
+
+    } catch (err) {
+      typing.remove();
+      appendError(`Lỗi kết nối: ${err.message}`);
+    } finally {
+      isLoading = false;
+      document.getElementById('send').disabled = false;
+      textarea.focus();
+    }
+  }
+
+  // Check server health on load
+  fetch(`${BASE}/health`)
+    .then(r => r.json())
+    .then(d => {
+      const dot = document.getElementById('statusDot');
+      const tag = document.getElementById('keyTag');
+      if (d.status === 'ok') {
+        dot.style.background = 'var(--success)';
+        dot.style.boxShadow = '0 0 6px var(--success)';
+        dot.title = `Online · ${d.llm_backend} · ${d.agents_running} agents`;
+        tag.textContent = d.environment;
+        document.getElementById('statModel').textContent = d.llm_backend === 'ngay09_multiagent' ? 'claude-3-haiku' : 'mock';
+      }
+    })
+    .catch(() => {
+      const dot = document.getElementById('statusDot');
+      dot.style.background = 'var(--error)';
+      dot.style.boxShadow = '0 0 6px var(--error)';
+      dot.title = 'Offline';
+    });
+</script>
+</body>
+</html>

@@ -31,6 +31,7 @@ COPY --from=builder /opt/venv /opt/venv
 # Copy application + NGAY09 agent modules
 COPY app/ ./app/
 COPY utils/ ./utils/
+COPY static/ ./static/
 COPY common/ ./common/
 COPY registry/ ./registry/
 COPY law_agent/ ./law_agent/

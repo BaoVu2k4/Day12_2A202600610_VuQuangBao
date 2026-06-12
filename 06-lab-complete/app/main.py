@@ -29,6 +29,8 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
@@ -200,10 +202,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins,
+    allow_origins=["*"],
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
+
+# Serve static UI
+_static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
+if os.path.isdir(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 
 @app.middleware("http")
@@ -251,11 +258,16 @@ class AskResponse(BaseModel):
 # ─────────────────────────────────────────────────────────
 @app.get("/", tags=["Info"])
 def root():
+    # Serve UI if static dir exists, else JSON
+    ui_path = os.path.join(os.path.dirname(__file__), "..", "static", "index.html")
+    if os.path.isfile(ui_path):
+        return FileResponse(ui_path)
     return {
         "app": settings.app_name,
         "version": settings.app_version,
         "environment": settings.environment,
         "llm_backend": "ngay09_multiagent" if _use_real_agents else "mock",
+        "ui": "GET / (browser)",
         "endpoints": {
             "ask": "POST /ask (requires X-API-Key)",
             "health": "GET /health",

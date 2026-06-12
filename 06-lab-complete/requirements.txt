@@ -2,6 +2,7 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.34.0
 pydantic>=2.11.0
+aiofiles>=23.0.0
 
 # ── Multi-agent (NGAY09 Legal Multi-Agent System) ──────────
 a2a-sdk[http-server]>=0.3.0,<1.0
