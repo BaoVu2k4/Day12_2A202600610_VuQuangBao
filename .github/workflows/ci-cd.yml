@@ -1,0 +1,97 @@
+name: CI/CD — Day 12 Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ──────────────────────────────────────────
+  # CI: Verify code quality & production readiness
+  # ──────────────────────────────────────────
+  ci:
+    name: CI — Verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check required files exist
+        run: |
+          echo "Checking required files..."
+          test -f 06-lab-complete/Dockerfile         && echo "  OK Dockerfile"
+          test -f 06-lab-complete/docker-compose.yml && echo "  OK docker-compose.yml"
+          test -f 06-lab-complete/.dockerignore       && echo "  OK .dockerignore"
+          test -f 06-lab-complete/.env.example        && echo "  OK .env.example"
+          test -f 06-lab-complete/requirements.txt    && echo "  OK requirements.txt"
+          test -f 06-lab-complete/railway.toml        && echo "  OK railway.toml"
+          test -f 06-lab-complete/app/main.py         && echo "  OK app/main.py"
+          test -f 06-lab-complete/app/auth.py         && echo "  OK app/auth.py"
+          test -f 06-lab-complete/app/rate_limiter.py && echo "  OK app/rate_limiter.py"
+          test -f 06-lab-complete/app/cost_guard.py   && echo "  OK app/cost_guard.py"
+          test -f MISSION_ANSWERS.md                  && echo "  OK MISSION_ANSWERS.md"
+          test -f DEPLOYMENT.md                       && echo "  OK DEPLOYMENT.md"
+          echo "All required files present!"
+
+      - name: Check no hardcoded secrets
+        run: |
+          echo "Scanning for hardcoded secrets..."
+          ! grep -rn "sk-" 06-lab-complete/app/ --include="*.py" || (echo "ERROR: found sk- in code" && exit 1)
+          ! grep -rn "password123" 06-lab-complete/app/ --include="*.py" || (echo "ERROR: found password123" && exit 1)
+          ! grep -rn "hardcoded" 06-lab-complete/app/ --include="*.py" || (echo "ERROR: found 'hardcoded' in code" && exit 1)
+          ! test -f 06-lab-complete/.env || (echo "ERROR: .env file committed!" && exit 1)
+          echo "No hardcoded secrets found!"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r 06-lab-complete/requirements.txt
+
+      - name: Run production readiness check
+        run: |
+          cd 06-lab-complete
+          python check_production_ready.py
+
+      - name: Verify Docker build (dry run)
+        run: |
+          docker build -t ci-test:latest 06-lab-complete/ --no-cache --quiet
+          echo "Docker build successful!"
+
+  # ──────────────────────────────────────────
+  # CD: Deploy to Railway (only on push to main)
+  # ──────────────────────────────────────────
+  cd:
+    name: CD — Deploy to Railway
+    needs: ci
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          cd 06-lab-complete
+          railway up --detach --service exemplary-mercy
+
+      - name: Verify deployment health
+        run: |
+          echo "Waiting 30s for deploy to propagate..."
+          sleep 30
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            https://exemplary-mercy-production-080d.up.railway.app/health)
+          echo "Health check status: $STATUS"
+          [ "$STATUS" = "200" ] && echo "Deployment healthy!" || (echo "Health check failed!" && exit 1)
