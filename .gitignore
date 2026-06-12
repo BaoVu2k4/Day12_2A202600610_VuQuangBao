@@ -34,3 +34,7 @@ Thumbs.db
 # ── Docker volumes (local dev) ─────────────────────��──────
 data/
 volumes/
+
+# ── Claude Code (không push lên GitHub) ───────────────────
+CLAUDE.md
+.claude/

@@ -1,7 +1,23 @@
-fastapi==0.115.0
-uvicorn[standard]==0.30.0
-pydantic==2.9.0
-pyjwt==2.9.0
-python-dotenv==1.0.1
-redis==5.1.0
-psutil==6.0.0
+# ── Web framework ──────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+pydantic>=2.11.0
+
+# ── Multi-agent (NGAY09 Legal Multi-Agent System) ──────────
+a2a-sdk[http-server]>=0.3.0,<1.0
+langgraph>=0.4.1
+langchain-openai>=0.3.0
+langchain-core>=0.3.0
+httpx>=0.28.0
+
+# ── Auth & security ────────────────────────────────────────
+pyjwt>=2.9.0
+
+# ── Config & env ───────────────────────────────────────────
+python-dotenv>=1.1.0
+
+# ── State / session (Day 12: stateless design) ─────────────
+redis>=5.1.0
+
+# ── Metrics ────────────────────────────────────────────────
+psutil>=6.0.0
